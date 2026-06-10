@@ -65,13 +65,46 @@ class ProcessSubtitleJob implements ShouldQueue
         }
 
         if ($job->video_type === 'youtube') {
-            $url = escapeshellarg($job->video_url);
-            $out = escapeshellarg($outputPath);
-            $cmd = "{$ytdlpPath} -x --audio-format mp3 --audio-quality 0 -o {$out} {$url} 2>&1";
-            $output = shell_exec($cmd);
+            $url    = escapeshellarg($job->video_url);
+            $out    = escapeshellarg($outputPath);
+            $output = '';
+
+            // Build shared flags (cookies + proxy optional via .env)
+            $sharedFlags = $this->buildYtdlpFlags();
+
+            // Try each player client in order until one succeeds
+            $clients = ['android_vr', 'ios', 'mweb', 'android'];
+            foreach ($clients as $client) {
+                $cmd = implode(' ', array_filter([
+                    $ytdlpPath,
+                    '-x',
+                    '--audio-format mp3',
+                    '--audio-quality 0',
+                    "--extractor-args \"youtube:player_client={$client}\"",
+                    '--no-check-certificates',
+                    '--retries 3',
+                    '--fragment-retries 3',
+                    $sharedFlags,
+                    '-o', $out,
+                    $url,
+                    '2>&1',
+                ]));
+
+                $output .= "\n---client={$client}---\n" . shell_exec($cmd);
+
+                if (file_exists($outputPath)) {
+                    break;
+                }
+            }
 
             if (!file_exists($outputPath)) {
-                throw new \RuntimeException("yt-dlp failed to extract audio.\n" . $output);
+                $hint = "YouTube memblokir server ini.\n"
+                    . "Solusi:\n"
+                    . "1. Set YTDLP_COOKIES_FILE=/path/to/cookies.txt di .env (export cookies dari browser)\n"
+                    . "2. Set YTDLP_PROXY=http://proxy:port di .env\n"
+                    . "3. Atau gunakan URL video langsung (bukan YouTube)\n\n"
+                    . "Detail error:\n" . $output;
+                throw new \RuntimeException($hint);
             }
         } else {
             // Direct video URL — download and extract audio with ffmpeg
@@ -172,5 +205,24 @@ class ProcessSubtitleJob implements ShouldQueue
         $ms = round(($seconds - floor($seconds)) * 1000);
 
         return sprintf('%02d:%02d:%02d,%03d', $h, $m, $s, $ms);
+    }
+
+    private function buildYtdlpFlags(): string
+    {
+        $flags = [];
+
+        // Cookies file (export from browser via EditThisCookie or similar)
+        $cookiesFile = env('YTDLP_COOKIES_FILE');
+        if ($cookiesFile && file_exists($cookiesFile)) {
+            $flags[] = '--cookies ' . escapeshellarg($cookiesFile);
+        }
+
+        // HTTP proxy (e.g. http://user:pass@proxy.example.com:3128)
+        $proxy = env('YTDLP_PROXY');
+        if ($proxy) {
+            $flags[] = '--proxy ' . escapeshellarg($proxy);
+        }
+
+        return implode(' ', $flags);
     }
 }
