@@ -204,7 +204,6 @@
                             class="video-js vjs-default-skin vjs-big-play-centered vjs-fluid"
                             controls
                             preload="auto"
-                            crossorigin="anonymous"
                         ></video>
                     </div>
                     <p class="mt-2 text-xs text-slate-500 text-center">Subtitle otomatis aktif saat diputar</p>
@@ -431,7 +430,7 @@
         // Re-create the <video> element (dispose removes the DOM node)
         const wrap = document.querySelector('#directContainer .bg-black');
         wrap.innerHTML =
-            '<video id="videoPlayer" class="video-js vjs-default-skin vjs-big-play-centered vjs-fluid" controls preload="auto" crossorigin="anonymous"></video>';
+            '<video id="videoPlayer" class="video-js vjs-default-skin vjs-big-play-centered vjs-fluid" controls preload="auto"></video>';
 
         const opts = {
             fluid: true,
