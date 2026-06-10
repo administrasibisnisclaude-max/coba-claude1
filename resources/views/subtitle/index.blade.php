@@ -52,6 +52,18 @@
         .transcript-line:hover { background: rgba(255,255,255,.06); border-left-color: #a78bfa; }
         .transcript-line.active { background: rgba(139,92,246,.15); border-left-color: #a78bfa; color: #e9d5ff; }
 
+        /* Transcript panel — match video column height on desktop */
+        @media (min-width: 1024px) {
+            #transcriptPanel {
+                max-height: 520px;
+            }
+            #transcriptList {
+                max-height: unset !important;
+                flex: 1 1 0%;
+                min-height: 0;
+            }
+        }
+
         /* Loaders & animations */
         .loader-dots span { animation: blink 1.4s infinite both; }
         .loader-dots span:nth-child(2) { animation-delay: .2s; }
@@ -63,7 +75,7 @@
 </head>
 <body class="bg-gradient-to-br from-slate-900 via-purple-950 to-slate-900 min-h-screen text-white">
 
-<div class="container mx-auto px-4 py-10 max-w-4xl">
+<div class="container mx-auto px-4 py-10 max-w-7xl">
 
     <!-- Header -->
     <div class="text-center mb-10">
@@ -165,87 +177,98 @@
     <!-- Player Section -->
     <div id="playerSection" class="hidden fade-in">
 
-        <!-- ── YouTube player dengan subtitle overlay ── -->
-        <div id="youtubeContainer" class="hidden">
-            <div class="relative bg-black rounded-2xl overflow-hidden shadow-2xl border border-white/10">
-                <div class="aspect-video" id="ytPlayerWrap">
-                    <div id="ytPlayer"></div>
+        <!-- ── Baris utama: video (kiri) + transkrip (kanan) ── -->
+        <div class="flex flex-col lg:flex-row gap-5 items-start">
+
+            <!-- Kolom video (kiri, 60%) -->
+            <div class="w-full lg:w-[60%] shrink-0">
+
+                <!-- YouTube player dengan subtitle overlay -->
+                <div id="youtubeContainer" class="hidden">
+                    <div class="relative bg-black rounded-2xl overflow-hidden shadow-2xl border border-white/10">
+                        <div class="aspect-video" id="ytPlayerWrap">
+                            <div id="ytPlayer" style="width:100%;height:100%;"></div>
+                        </div>
+                        <div id="ytSubtitleOverlay">
+                            <span id="ytSubtitleText"></span>
+                        </div>
+                    </div>
+                    <p class="mt-2 text-xs text-slate-500 text-center">Subtitle overlay real-time — dihasilkan oleh OpenAI Whisper</p>
                 </div>
-                <!-- Custom subtitle overlay -->
-                <div id="ytSubtitleOverlay">
-                    <span id="ytSubtitleText"></span>
+
+                <!-- Direct video player (Video.js + VTT track) -->
+                <div id="directContainer" class="hidden">
+                    <div class="bg-black rounded-2xl overflow-hidden shadow-2xl border border-white/10">
+                        <video
+                            id="videoPlayer"
+                            class="video-js vjs-default-skin vjs-big-play-centered vjs-fluid"
+                            controls
+                            preload="auto"
+                            crossorigin="anonymous"
+                        ></video>
+                    </div>
+                    <p class="mt-2 text-xs text-slate-500 text-center">Subtitle otomatis aktif saat diputar</p>
+                </div>
+
+                <div class="mt-4 text-center">
+                    <button onclick="resetForm()"
+                        class="text-sm text-slate-400 hover:text-white transition flex items-center gap-2 mx-auto">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                        </svg>
+                        Proses Video Lain
+                    </button>
                 </div>
             </div>
-            <p class="mt-2 text-xs text-slate-500 text-center">Subtitle overlay real-time — dihasilkan oleh OpenAI Whisper</p>
-        </div>
 
-        <!-- ── Direct video player (Video.js + VTT track) ── -->
-        <div id="directContainer" class="hidden">
-            <div class="bg-black rounded-2xl overflow-hidden shadow-2xl border border-white/10">
-                <video
-                    id="videoPlayer"
-                    class="video-js vjs-default-skin vjs-big-play-centered vjs-fluid"
-                    controls
-                    preload="auto"
-                    crossorigin="anonymous"
-                >
-                </video>
-            </div>
-            <p class="mt-2 text-xs text-slate-500 text-center">Subtitle terpasang langsung di video — aktifkan via tombol CC di player</p>
-        </div>
+            <!-- Kolom transkrip (kanan, 40%) -->
+            <div class="w-full lg:flex-1 bg-white/5 border border-white/10 rounded-2xl shadow-xl overflow-hidden flex flex-col" id="transcriptPanel">
 
-        <!-- ── Transcript panel ── -->
-        <div class="mt-5 bg-white/5 border border-white/10 rounded-2xl shadow-xl overflow-hidden">
-            <div class="flex items-center justify-between px-5 py-4 border-b border-white/10">
-                <h2 class="text-base font-semibold flex items-center gap-2">
-                    <svg class="w-4.5 h-4.5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                            d="M4 6h16M4 12h16M4 18h12"/>
+                <!-- Header transkrip -->
+                <div class="flex items-center justify-between px-5 py-4 border-b border-white/10 shrink-0">
+                    <h2 class="text-base font-semibold flex items-center gap-2">
+                        <svg class="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M4 6h16M4 12h16M4 18h12"/>
+                        </svg>
+                        Transkrip
+                    </h2>
+                    <div class="flex gap-2">
+                        <a id="downloadSrt" href="#"
+                            class="text-xs px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded-lg transition flex items-center gap-1 font-medium">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                            </svg>
+                            SRT
+                        </a>
+                        <a id="downloadVtt" href="#"
+                            class="text-xs px-3 py-1.5 bg-purple-700 hover:bg-purple-600 rounded-lg transition flex items-center gap-1 font-medium">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                            </svg>
+                            VTT
+                        </a>
+                    </div>
+                </div>
+
+                <!-- List transkrip — tinggi mengikuti video -->
+                <div id="transcriptList"
+                    class="divide-y divide-white/5 overflow-y-auto text-sm text-slate-300 flex-1"
+                    style="max-height: 420px;">
+                </div>
+
+                <div class="px-5 py-3 border-t border-white/10 shrink-0 flex items-center gap-2 text-xs text-slate-500">
+                    <svg class="w-3.5 h-3.5 text-green-400 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
                     </svg>
-                    Transkrip
-                </h2>
-                <div class="flex gap-2">
-                    <a id="downloadSrt" href="#"
-                        class="text-xs px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded-lg transition flex items-center gap-1 font-medium">
-                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
-                        </svg>
-                        SRT
-                    </a>
-                    <a id="downloadVtt" href="#"
-                        class="text-xs px-3 py-1.5 bg-purple-700 hover:bg-purple-600 rounded-lg transition flex items-center gap-1 font-medium">
-                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
-                        </svg>
-                        VTT
-                    </a>
+                    OpenAI Whisper AI · klik untuk loncat ke waktu
                 </div>
             </div>
 
-            <!-- Scrollable timestamped transcript -->
-            <div id="transcriptList" class="divide-y divide-white/5 max-h-72 overflow-y-auto text-sm text-slate-300">
-            </div>
-
-            <div class="px-5 py-3 border-t border-white/10 flex items-center gap-2 text-xs text-slate-500">
-                <svg class="w-3.5 h-3.5 text-green-400 shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
-                </svg>
-                Dihasilkan oleh OpenAI Whisper AI · klik baris untuk loncat ke waktu tersebut
-            </div>
-        </div>
-
-        <div class="mt-5 text-center">
-            <button onclick="resetForm()"
-                class="text-sm text-slate-400 hover:text-white transition flex items-center gap-2 mx-auto">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
-                </svg>
-                Proses Video Lain
-            </button>
-        </div>
+        </div><!-- /baris utama -->
     </div>
 
 </div>
