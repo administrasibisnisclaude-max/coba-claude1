@@ -107,27 +107,78 @@ class ProcessSubtitleJob implements ShouldQueue
                 throw new \RuntimeException($hint);
             }
         } else {
-            // Direct video URL — download and extract audio with ffmpeg
-            $tempVideo = storage_path('app/temp/video_' . $job->id . '_' . uniqid() . '.mp4');
-            $videoUrl = escapeshellarg($job->video_url);
-            $tmpOut = escapeshellarg($tempVideo);
-            $audioOut = escapeshellarg($outputPath);
+            // Direct video URL — try yt-dlp first (handles more formats/auth),
+            // then fall back to curl + ffmpeg
+            $videoUrl  = $job->video_url;
+            $audioOut  = escapeshellarg($outputPath);
+            $sharedFlags = $this->buildYtdlpFlags();
 
-            $dlCmd = "curl -sL --max-time 300 -o {$tmpOut} {$videoUrl} 2>&1";
-            shell_exec($dlCmd);
+            // Attempt 1: yt-dlp (supports range requests, cookies, redirects)
+            $ytCmd = implode(' ', array_filter([
+                $ytdlpPath,
+                '-x',
+                '--audio-format mp3',
+                '--audio-quality 0',
+                '--no-check-certificates',
+                '--retries 3',
+                $sharedFlags,
+                '-o', $audioOut,
+                escapeshellarg($videoUrl),
+                '2>&1',
+            ]));
+            $ytOutput = shell_exec($ytCmd);
 
-            if (!file_exists($tempVideo) || filesize($tempVideo) === 0) {
-                throw new \RuntimeException('Failed to download video from URL.');
+            // Attempt 2: ffmpeg direct stream (no full download needed)
+            if (!file_exists($outputPath) || filesize($outputPath) === 0) {
+                $ffmpegPath = trim(shell_exec('which ffmpeg') ?: '/usr/bin/ffmpeg');
+                $ffDirectCmd = implode(' ', [
+                    $ffmpegPath,
+                    '-user_agent', escapeshellarg('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36'),
+                    '-headers', escapeshellarg('Referer: ' . parse_url($videoUrl, PHP_URL_SCHEME) . '://' . parse_url($videoUrl, PHP_URL_HOST) . '/'),
+                    '-i', escapeshellarg($videoUrl),
+                    '-vn -acodec libmp3lame -q:a 2',
+                    $audioOut,
+                    '-y 2>&1',
+                ]);
+                $ffDirectOutput = shell_exec($ffDirectCmd);
             }
 
-            $ffmpegPath = trim(shell_exec('which ffmpeg') ?: '/usr/bin/ffmpeg');
-            $ffCmd = "{$ffmpegPath} -i {$tmpOut} -vn -acodec libmp3lame -q:a 2 {$audioOut} -y 2>&1";
-            shell_exec($ffCmd);
+            // Attempt 3: curl download + ffmpeg extract
+            if (!file_exists($outputPath) || filesize($outputPath) === 0) {
+                $tempVideo = storage_path('app/temp/video_' . $job->id . '_' . uniqid() . '.mp4');
+                $tmpOut    = escapeshellarg($tempVideo);
+                $referer   = parse_url($videoUrl, PHP_URL_SCHEME) . '://' . parse_url($videoUrl, PHP_URL_HOST) . '/';
 
-            @unlink($tempVideo);
+                $dlCmd = implode(' ', [
+                    'curl -sL --max-time 300',
+                    '--retry 3',
+                    '-A', escapeshellarg('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36'),
+                    '-e', escapeshellarg($referer),
+                    '--no-check-certificate',
+                    '-o', $tmpOut,
+                    escapeshellarg($videoUrl),
+                    '2>&1',
+                ]);
+                $curlOutput = shell_exec($dlCmd);
+
+                if (file_exists($tempVideo) && filesize($tempVideo) > 0) {
+                    $ffmpegPath = trim(shell_exec('which ffmpeg') ?: '/usr/bin/ffmpeg');
+                    $ffCmd = "{$ffmpegPath} -i {$tmpOut} -vn -acodec libmp3lame -q:a 2 {$audioOut} -y 2>&1";
+                    shell_exec($ffCmd);
+                }
+
+                @unlink($tempVideo ?? '');
+            }
 
             if (!file_exists($outputPath) || filesize($outputPath) === 0) {
-                throw new \RuntimeException('Failed to extract audio with ffmpeg.');
+                throw new \RuntimeException(
+                    "Gagal mengunduh audio dari URL video.\n\n"
+                    . "Kemungkinan penyebab:\n"
+                    . "- Server video memblokir IP hosting (hotlink protection)\n"
+                    . "- URL tidak dapat diakses dari server ini\n"
+                    . "- Format video tidak didukung\n\n"
+                    . "Detail: " . ($ytOutput ?? '') . ($ffDirectOutput ?? '') . ($curlOutput ?? '')
+                );
             }
         }
 
