@@ -113,19 +113,20 @@ class ProcessSubtitleJob implements ShouldQueue
             $audioOut  = escapeshellarg($outputPath);
             $sharedFlags = $this->buildYtdlpFlags();
 
-            // Pre-flight: quick HEAD check to detect blocked/inaccessible URLs early
+            // Pre-flight: hard-timeout HEAD check via Linux timeout command
             $preflightCmd = implode(' ', [
+                'timeout 20',
                 'curl -sI --max-time 15 --connect-timeout 10',
-                '--retry 1',
                 '-A', escapeshellarg('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36'),
                 '--no-check-certificate',
                 '-o /dev/null -w "%{http_code}"',
                 escapeshellarg($videoUrl),
+                '2>/dev/null',
             ]);
             $httpCode = trim(shell_exec($preflightCmd) ?: '0');
 
-            if (in_array($httpCode, ['403', '401', '0'], true)) {
-                $codeLabel = $httpCode === '0' ? 'tidak dapat dijangkau (timeout/DNS)' : "HTTP {$httpCode}";
+            if (in_array($httpCode, ['403', '401', '0', ''], true)) {
+                $codeLabel = ($httpCode === '0' || $httpCode === '') ? 'tidak dapat dijangkau (timeout/DNS)' : "HTTP {$httpCode}";
                 throw new \RuntimeException(
                     "URL video tidak dapat diakses dari server ini ({$codeLabel}).\n\n"
                     . "Kemungkinan penyebab:\n"
@@ -136,15 +137,16 @@ class ProcessSubtitleJob implements ShouldQueue
                 );
             }
 
-            // Attempt 1: yt-dlp (supports range requests, cookies, redirects)
+            // Attempt 1: yt-dlp with hard timeout
             $ytCmd = implode(' ', array_filter([
+                'timeout 120',
                 $ytdlpPath,
                 '-x',
                 '--audio-format mp3',
                 '--audio-quality 0',
                 '--no-check-certificates',
-                '--retries 3',
-                '--socket-timeout 30',
+                '--retries 2',
+                '--socket-timeout 20',
                 $sharedFlags,
                 '-o', $audioOut,
                 escapeshellarg($videoUrl),
@@ -152,13 +154,14 @@ class ProcessSubtitleJob implements ShouldQueue
             ]));
             $ytOutput = shell_exec($ytCmd);
 
-            // Attempt 2: ffmpeg direct stream (no full download needed)
+            // Attempt 2: ffmpeg direct stream with hard timeout
             if (!file_exists($outputPath) || filesize($outputPath) === 0) {
                 $ffmpegPath = trim(shell_exec('which ffmpeg') ?: '/usr/bin/ffmpeg');
                 $referer = parse_url($videoUrl, PHP_URL_SCHEME) . '://' . parse_url($videoUrl, PHP_URL_HOST) . '/';
                 $ffDirectCmd = implode(' ', [
+                    'timeout 60',
                     $ffmpegPath,
-                    '-timeout 30000000',
+                    '-timeout 20000000',
                     '-user_agent', escapeshellarg('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36'),
                     '-headers', escapeshellarg('Referer: ' . $referer),
                     '-i', escapeshellarg($videoUrl),
@@ -169,15 +172,16 @@ class ProcessSubtitleJob implements ShouldQueue
                 $ffDirectOutput = shell_exec($ffDirectCmd);
             }
 
-            // Attempt 3: curl download + ffmpeg extract
+            // Attempt 3: curl download + ffmpeg extract with hard timeouts
             if (!file_exists($outputPath) || filesize($outputPath) === 0) {
                 $tempVideo = storage_path('app/temp/video_' . $job->id . '_' . uniqid() . '.mp4');
                 $tmpOut    = escapeshellarg($tempVideo);
                 $referer   = parse_url($videoUrl, PHP_URL_SCHEME) . '://' . parse_url($videoUrl, PHP_URL_HOST) . '/';
 
                 $dlCmd = implode(' ', [
-                    'curl -sL --max-time 300',
-                    '--retry 3',
+                    'timeout 120',
+                    'curl -sL --max-time 90 --connect-timeout 15',
+                    '--retry 1',
                     '-A', escapeshellarg('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36'),
                     '-e', escapeshellarg($referer),
                     '--no-check-certificate',
@@ -189,7 +193,7 @@ class ProcessSubtitleJob implements ShouldQueue
 
                 if (file_exists($tempVideo) && filesize($tempVideo) > 0) {
                     $ffmpegPath = trim(shell_exec('which ffmpeg') ?: '/usr/bin/ffmpeg');
-                    $ffCmd = "{$ffmpegPath} -i {$tmpOut} -vn -acodec libmp3lame -q:a 2 {$audioOut} -y 2>&1";
+                    $ffCmd = "timeout 120 {$ffmpegPath} -i {$tmpOut} -vn -acodec libmp3lame -q:a 2 {$audioOut} -y 2>&1";
                     shell_exec($ffCmd);
                 }
 
