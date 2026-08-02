@@ -115,9 +115,17 @@ class ProcessSubtitleJob implements ShouldQueue
             $audioOut  = escapeshellarg($outputPath);
             $sharedFlags = $this->buildYtdlpFlags();
 
-            // Pre-flight: hard-timeout HEAD check via Linux timeout command
+            // Hard-timeout prefix via the Linux `timeout` command, if present.
+            // Falls back to no prefix on systems without coreutils timeout.
+            $timeoutBin = trim(shell_exec('command -v timeout') ?: '');
+            $tw = fn (int $sec) => $timeoutBin ? "{$timeoutBin} {$sec}" : '';
+
+            // Pre-flight: only abort on an EXPLICIT block (403/401). Many
+            // servers reject HEAD (-I) but still serve GET/range requests, so
+            // an empty/0 result is NOT treated as fatal — we fall through and
+            // let the (time-bounded) download attempts do the real work.
             $preflightCmd = implode(' ', [
-                'timeout 20',
+                $tw(20),
                 'curl -sI --max-time 15 --connect-timeout 10',
                 '-A', escapeshellarg('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36'),
                 '--no-check-certificate',
@@ -125,23 +133,21 @@ class ProcessSubtitleJob implements ShouldQueue
                 escapeshellarg($videoUrl),
                 '2>/dev/null',
             ]);
-            $httpCode = trim(shell_exec($preflightCmd) ?: '0');
+            $httpCode = trim(shell_exec($preflightCmd) ?: '');
 
-            if (in_array($httpCode, ['403', '401', '0', ''], true)) {
-                $codeLabel = ($httpCode === '0' || $httpCode === '') ? 'tidak dapat dijangkau (timeout/DNS)' : "HTTP {$httpCode}";
+            if (in_array($httpCode, ['403', '401'], true)) {
                 throw new \RuntimeException(
-                    "URL video tidak dapat diakses dari server ini ({$codeLabel}).\n\n"
+                    "URL video ditolak oleh server (HTTP {$httpCode}).\n\n"
                     . "Kemungkinan penyebab:\n"
                     . "- Server memblokir IP hosting ini (hotlink protection / host_not_allowed)\n"
-                    . "- Video memerlukan autentikasi\n"
-                    . "- URL salah atau file tidak ada\n\n"
+                    . "- Video memerlukan autentikasi\n\n"
                     . "Solusi: Gunakan URL video yang dapat diakses secara publik tanpa pembatasan IP."
                 );
             }
 
             // Attempt 1: yt-dlp with hard timeout
             $ytCmd = implode(' ', array_filter([
-                'timeout 120',
+                $tw(120),
                 $ytdlpPath,
                 '-x',
                 '--audio-format mp3',
@@ -161,7 +167,7 @@ class ProcessSubtitleJob implements ShouldQueue
                 $ffmpegPath = trim(shell_exec('which ffmpeg') ?: '/usr/bin/ffmpeg');
                 $referer = parse_url($videoUrl, PHP_URL_SCHEME) . '://' . parse_url($videoUrl, PHP_URL_HOST) . '/';
                 $ffDirectCmd = implode(' ', [
-                    'timeout 60',
+                    $tw(60),
                     $ffmpegPath,
                     '-timeout 20000000',
                     '-user_agent', escapeshellarg('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36'),
@@ -181,7 +187,7 @@ class ProcessSubtitleJob implements ShouldQueue
                 $referer   = parse_url($videoUrl, PHP_URL_SCHEME) . '://' . parse_url($videoUrl, PHP_URL_HOST) . '/';
 
                 $dlCmd = implode(' ', [
-                    'timeout 120',
+                    $tw(120),
                     'curl -sL --max-time 90 --connect-timeout 15',
                     '--retry 1',
                     '-A', escapeshellarg('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36'),
@@ -195,7 +201,7 @@ class ProcessSubtitleJob implements ShouldQueue
 
                 if (file_exists($tempVideo) && filesize($tempVideo) > 0) {
                     $ffmpegPath = trim(shell_exec('which ffmpeg') ?: '/usr/bin/ffmpeg');
-                    $ffCmd = "timeout 120 {$ffmpegPath} -i {$tmpOut} -vn -acodec libmp3lame -q:a 2 {$audioOut} -y 2>&1";
+                    $ffCmd = trim($tw(120) . " {$ffmpegPath} -i {$tmpOut} -vn -acodec libmp3lame -q:a 2 {$audioOut} -y 2>&1");
                     shell_exec($ffCmd);
                 }
 
@@ -203,12 +209,14 @@ class ProcessSubtitleJob implements ShouldQueue
             }
 
             if (!file_exists($outputPath) || filesize($outputPath) === 0) {
+                $preflightInfo = $httpCode !== '' ? "HTTP {$httpCode}" : 'tidak ada respon (HEAD diblokir/timeout)';
                 throw new \RuntimeException(
                     "Gagal mengunduh audio dari URL video.\n\n"
                     . "Kemungkinan penyebab:\n"
                     . "- Server video memblokir IP hosting (hotlink protection)\n"
                     . "- URL tidak dapat diakses dari server ini\n"
                     . "- Format video tidak didukung\n\n"
+                    . "Pre-flight: {$preflightInfo}\n"
                     . "Detail: " . ($ytOutput ?? '') . ($ffDirectOutput ?? '') . ($curlOutput ?? '')
                 );
             }
