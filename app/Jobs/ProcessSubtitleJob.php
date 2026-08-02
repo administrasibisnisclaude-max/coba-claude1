@@ -20,6 +20,8 @@ class ProcessSubtitleJob implements ShouldQueue
 
     public function handle(): void
     {
+        @set_time_limit(0);
+
         $job = SubtitleJob::findOrFail($this->subtitleJobId);
         $job->update(['status' => 'processing']);
 

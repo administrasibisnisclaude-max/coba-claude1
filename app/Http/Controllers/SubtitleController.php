@@ -33,13 +33,20 @@ class SubtitleController extends Controller
             'status' => 'pending',
         ]);
 
-        ProcessSubtitleJob::dispatch($job->id);
+        // Run synchronously so it works without a separate queue worker
+        // (php artisan queue:work). The request blocks until transcription
+        // finishes, then the frontend polls and immediately sees the result.
+        @set_time_limit(0);
+        ProcessSubtitleJob::dispatchSync($job->id);
+
+        $job->refresh();
 
         return response()->json([
             'job_id' => $job->id,
             'status' => $job->status,
             'video_url' => $videoUrl,
             'video_type' => $videoType,
+            'error_message' => $job->error_message,
         ]);
     }
 

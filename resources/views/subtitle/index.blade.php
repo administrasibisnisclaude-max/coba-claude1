@@ -323,8 +323,19 @@
             }
             const data = await res.json();
             currentJobId = data.job_id;
-            setProgress(25, 'Mengunduh audio dari video...');
-            startPolling();
+
+            // With synchronous processing the POST already returns the final
+            // status — act on it directly instead of waiting for a poll tick.
+            if (data.status === 'completed') {
+                setProgress(100, 'Selesai!');
+                const res2 = await fetch(`/subtitle/${currentJobId}/status`);
+                showPlayer(await res2.json());
+            } else if (data.status === 'failed') {
+                showError(data.error_message || 'Terjadi kesalahan saat memproses.');
+            } else {
+                setProgress(25, 'Mengunduh audio dari video...');
+                startPolling();
+            }
         } catch (err) {
             showError(err.message);
         }
