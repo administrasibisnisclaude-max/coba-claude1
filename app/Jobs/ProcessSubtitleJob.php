@@ -113,6 +113,29 @@ class ProcessSubtitleJob implements ShouldQueue
             $audioOut  = escapeshellarg($outputPath);
             $sharedFlags = $this->buildYtdlpFlags();
 
+            // Pre-flight: quick HEAD check to detect blocked/inaccessible URLs early
+            $preflightCmd = implode(' ', [
+                'curl -sI --max-time 15 --connect-timeout 10',
+                '--retry 1',
+                '-A', escapeshellarg('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36'),
+                '--no-check-certificate',
+                '-o /dev/null -w "%{http_code}"',
+                escapeshellarg($videoUrl),
+            ]);
+            $httpCode = trim(shell_exec($preflightCmd) ?: '0');
+
+            if (in_array($httpCode, ['403', '401', '0'], true)) {
+                $codeLabel = $httpCode === '0' ? 'tidak dapat dijangkau (timeout/DNS)' : "HTTP {$httpCode}";
+                throw new \RuntimeException(
+                    "URL video tidak dapat diakses dari server ini ({$codeLabel}).\n\n"
+                    . "Kemungkinan penyebab:\n"
+                    . "- Server memblokir IP hosting ini (hotlink protection / host_not_allowed)\n"
+                    . "- Video memerlukan autentikasi\n"
+                    . "- URL salah atau file tidak ada\n\n"
+                    . "Solusi: Gunakan URL video yang dapat diakses secara publik tanpa pembatasan IP."
+                );
+            }
+
             // Attempt 1: yt-dlp (supports range requests, cookies, redirects)
             $ytCmd = implode(' ', array_filter([
                 $ytdlpPath,
@@ -121,6 +144,7 @@ class ProcessSubtitleJob implements ShouldQueue
                 '--audio-quality 0',
                 '--no-check-certificates',
                 '--retries 3',
+                '--socket-timeout 30',
                 $sharedFlags,
                 '-o', $audioOut,
                 escapeshellarg($videoUrl),
@@ -131,10 +155,12 @@ class ProcessSubtitleJob implements ShouldQueue
             // Attempt 2: ffmpeg direct stream (no full download needed)
             if (!file_exists($outputPath) || filesize($outputPath) === 0) {
                 $ffmpegPath = trim(shell_exec('which ffmpeg') ?: '/usr/bin/ffmpeg');
+                $referer = parse_url($videoUrl, PHP_URL_SCHEME) . '://' . parse_url($videoUrl, PHP_URL_HOST) . '/';
                 $ffDirectCmd = implode(' ', [
                     $ffmpegPath,
+                    '-timeout 30000000',
                     '-user_agent', escapeshellarg('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36'),
-                    '-headers', escapeshellarg('Referer: ' . parse_url($videoUrl, PHP_URL_SCHEME) . '://' . parse_url($videoUrl, PHP_URL_HOST) . '/'),
+                    '-headers', escapeshellarg('Referer: ' . $referer),
                     '-i', escapeshellarg($videoUrl),
                     '-vn -acodec libmp3lame -q:a 2',
                     $audioOut,
